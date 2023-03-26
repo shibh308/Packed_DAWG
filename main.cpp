@@ -29,7 +29,7 @@ struct Benchmark {
     std::string_view text_view;
     Index index;
     int text_length, seed;
-    std::ofstream out_file;
+    std::ofstream& out_file;
 
     void benchmark_text(const std::vector<int>& pattern_poses, int pattern_length){
         std::clog << "matching..." << std::endl;
@@ -54,8 +54,8 @@ struct Benchmark {
     // template<typename DAWGBasedIndex> requires std::is_base_of_v<FullTextIndex, DAWGBasedIndex> && std::is_constructible_v<DAWGBasedIndex, const DAWGBase&>
 
 public:
-    explicit Benchmark(std::string_view text_view, std::string file_name, std::string out_path, int seed = 0) : file_name(file_name), seed(seed), text_view(text_view), index(text_view), text_length(text_view.length()){
-        out_file = std::ofstream(out_path);
+    explicit Benchmark(std::string_view text_view, std::string file_name, std::ofstream& out_file, int seed = 0) : file_name(std::move(file_name)), seed(seed), text_view(text_view), out_file(out_file), index(text_view), text_length(text_view.length()){
+        std::clog << type_name<Index>() << " construct end" << std::endl;
         assert(out_file.is_open());
     }
 
@@ -65,11 +65,9 @@ public:
         assert(pattern_length <= text_length);
         std::uniform_int_distribution<int> dist(0, text_length - pattern_length);
 
-        std::clog << "--------------run------------" << std::endl;
         std::clog << "text_length   : " << text_length << std::endl;
         std::clog << "num_queries   : " << num_queries << std::endl;
         std::clog << "pattern_length: " << pattern_length << std::endl;
-        std::clog << std::endl;
 
         std::vector<int> pattern_poses(num_queries);
         for(int i = 0; i < num_queries; ++i){
@@ -77,15 +75,6 @@ public:
         }
 
         benchmark_text(pattern_poses, pattern_length);
-
-        /*
-        benchmark_text_from_DAWG<HeavyPathDAWG<BinarySearchMap>>(dawg_base, pattern_poses, pattern_length);
-        benchmark_text_from_DAWG<HeavyTreeDAWGWithHPDAnc<BinarySearchMap>>(dawg_base, pattern_poses, pattern_length);
-        benchmark_text_from_DAWG<HeavyTreeDAWGWithMemoAnc<BinarySearchMap>>(dawg_base, pattern_poses, pattern_length);
-        benchmark_text_from_DAWG<HeavyTreeDAWGWithExpAnc<BinarySearchMap>>(dawg_base, pattern_poses, pattern_length);
-        benchmark_text_from_DAWG<HeavyTreeDAWGWithNaiveAnc<BinarySearchMap>>(dawg_base, pattern_poses, pattern_length);
-        benchmark_text_from_DAWG<SimpleDAWG<BinarySearchMap>>(dawg_base, pattern_poses, pattern_length);
-         */
 
         /*
         std::clog << "constructing " << type_name<DAWGBase>() << std::endl;
@@ -98,13 +87,13 @@ public:
 
 
 template<typename Index> requires std::is_base_of_v<FullTextIndex, Index>
-void _bench(std::string data_path, std::string out_path){
+void _bench(std::string data_path, std::ofstream& out_file){
     std::clog << "loading: " << data_path << std::endl;
     std::ifstream file(data_path);
     assert(file.is_open());
     std::string text = std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     std::clog << "constructing..." << std::endl;
-    Benchmark<Index> bench(text, data_path.substr(data_path.rfind('/') + 1), out_path);
+    Benchmark<Index> bench(text, data_path.substr(data_path.rfind('/') + 1), out_file);
 
     constexpr int num_queries = 10000;
     for(int pattern_length = 10; pattern_length <= 10'000; pattern_length *= 10){
@@ -113,23 +102,24 @@ void _bench(std::string data_path, std::string out_path){
 }
 
 template<typename... Indexes> requires (std::is_base_of_v<FullTextIndex, Indexes> && ...)
-void bench(std::string data_path, std::string out_path){
-    (_bench<Indexes>(data_path, out_path), ...);
+void bench(std::string data_path, std::ofstream& out_file){
+    (_bench<Indexes>(data_path, out_file), ...);
 }
+
+template<typename K, typename V>
+using MapType = BinarySearchMap<K, V>;
 
 int main(){
     std::string out_file_path = "./data/output.txt";
-    std::string data_path = "./data/dna.50MB";
+    std::string data_path = "./data/dna.1MB";
+    std::ofstream out_file(out_file_path);
+
     bench<
-            HeavyPathDAWG<BinarySearchMap>
-                    /*
-                    ,
-            HeavyTreeDAWGWithHPDAnc<BinarySearchMap>,
-            HeavyTreeDAWGWithMemoAnc<BinarySearchMap>,
-            HeavyTreeDAWGWithExpAnc<BinarySearchMap>,
-            HeavyTreeDAWGWithNaiveAnc<BinarySearchMap>,
-            SimpleDAWG<BinarySearchMap>
-                     */
-    >(data_path, out_file_path);
+            HeavyPathDAWG<MapType>,
+            HeavyTreeDAWGWithNaiveAnc<MapType>,
+            HeavyTreeDAWGWithMemoAnc<MapType>,
+            HeavyTreeDAWGWithExpAnc<MapType>,
+            SimpleDAWG<MapType>
+    >(data_path, out_file);
     return 0;
 }

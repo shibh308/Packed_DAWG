@@ -8,8 +8,7 @@
 #include <cstring>
 
 #include "full_text_index.hpp"
-#include "hashmap.hpp"
-#include "ordered_map.hpp"
+#include "map.hpp"
 
 
 using ULong = std::uint64_t ;
@@ -39,48 +38,47 @@ inline ULong get_head(std::string_view str, unsigned int i){
 
 struct DAWGBase{
     struct Node{
-        std::map<unsigned char, int> ch;
+        HashMap<unsigned char, int> ch;
         int slink, len;
-        unsigned char c;
 
-        Node(int len, unsigned char c) : slink(-1), len(len), c(c){}
+        explicit Node(int len) : slink(-1), len(len){}
     };
 
     std::vector<Node> nodes;
     std::vector<int> node_ids;
 
     explicit DAWGBase(std::string_view text){
-        nodes.emplace_back(0, 0);
+        nodes.emplace_back(0);
         for(int i = 0; i < text.size(); ++i){
             add_node(i, text[i]);
         }
-        std::clog << "construct end" << std::endl;
+        std::clog << "DAWG Base construct end" << std::endl;
     }
 
     void add_node(int i, unsigned char c){
         int new_node = nodes.size();
         int target_node = (nodes.size() == 1 ? 0 : node_ids.back());
         node_ids.emplace_back(new_node);
-        nodes.emplace_back(i + 1, c);
+        nodes.emplace_back(i + 1);
 
         for(; target_node != -1 &&
-              nodes[target_node].ch.find(c) == nodes[target_node].ch.end(); target_node = nodes[target_node].slink){
-            nodes[target_node].ch[c] = new_node;
+              !nodes[target_node].ch.find(c).has_value(); target_node = nodes[target_node].slink){
+            nodes[target_node].ch.add(c, new_node);
         }
         if(target_node == -1){
             nodes[new_node].slink = 0;
         }else{
-            int sp_node = nodes[target_node].ch[c];
+            int sp_node = nodes[target_node].ch.find(c).value();
             if(nodes[target_node].len + 1 == nodes[sp_node].len){
                 nodes[new_node].slink = sp_node;
             }else{
                 int clone_node = nodes.size();
-                nodes.emplace_back(nodes[target_node].len + 1, nodes[sp_node].c);
+                nodes.emplace_back(nodes[target_node].len + 1);
                 nodes[clone_node].ch = nodes[sp_node].ch;
                 nodes[clone_node].slink = nodes[sp_node].slink;
-                for(; target_node != -1 && nodes[target_node].ch.find(c) != nodes[target_node].ch.end() &&
-                      nodes[target_node].ch[c] == sp_node; target_node = nodes[target_node].slink){
-                    nodes[target_node].ch[c] = clone_node;
+                for(; target_node != -1 && nodes[target_node].ch.find(c).has_value() &&
+                      nodes[target_node].ch.find(c).value() == sp_node; target_node = nodes[target_node].slink){
+                    nodes[target_node].ch.add(c, clone_node);
                 }
                 nodes[sp_node].slink = nodes[new_node].slink = clone_node;
             }
@@ -88,7 +86,7 @@ struct DAWGBase{
     }
 };
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class SimpleDAWG : FullTextIndex {
     std::vector<MapType<unsigned char, int>> children;
 public:
@@ -113,7 +111,7 @@ public:
     }
 };
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyTreeDAWG : FullTextIndex {
 protected:
     std::vector<int> heavy_edge_to;
@@ -126,7 +124,7 @@ public:
         std::vector<int> tps_order(n);
         std::vector<int> in_degree(n, 0);
         for(int x = 0; x < n; ++x){
-            for(auto [_key, y] : base.nodes[x].ch){
+            for(auto [_key, y] : base.nodes[x].ch.items()){
                 ++in_degree[y];
             }
         }
@@ -139,7 +137,7 @@ public:
             que.pop();
             tps_order[cnt] = x;
             ++cnt;
-            for(auto [_key, y] : base.nodes[x].ch){
+            for(auto [_key, y] : base.nodes[x].ch.items()){
                 --in_degree[y];
                 if(in_degree[y] == 0){
                     que.push(y);
@@ -150,14 +148,13 @@ public:
         std::vector<int> path_cnt(n, 0);
         sink = tps_order.back();
         assert(sink == base.node_ids.back());
-        assert(base.nodes[sink].ch.empty());
         path_cnt[sink] = 1;
         std::vector<unsigned char> heavy_edge_label(n, 0);
         heavy_edge_to.resize(n, 0);
         for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
             int x = *it;
             int path_cnt_max = 0;
-            for(auto [key, y] : base.nodes[x].ch){
+            for(auto [key, y] : base.nodes[x].ch.items()){
                 path_cnt[x] += path_cnt[y];
                 if(path_cnt_max < path_cnt[y]){
                     path_cnt_max = path_cnt[y];
@@ -170,7 +167,7 @@ public:
         for(int x = 0; x < n; ++x){
             std::vector<unsigned char> keys;
             std::vector<int> values;
-            for(auto [key, y] : base.nodes[x].ch){
+            for(auto [key, y] : base.nodes[x].ch.items()){
                 if(heavy_edge_label[x] != key){
                     keys.emplace_back(key);
                     values.emplace_back(y);
@@ -228,11 +225,11 @@ public:
 };
 
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyTreeDAWGWithNaiveAnc : HeavyTreeDAWG<MapType> {
 public:
     explicit HeavyTreeDAWGWithNaiveAnc(const DAWGBase& base) : HeavyTreeDAWG<MapType>(base) {}
-    explicit HeavyTreeDAWGWithNaiveAnc(std::string_view text) : HeavyTreeDAWG<MapType>(DAWGBase(text)){}
+    explicit HeavyTreeDAWGWithNaiveAnc(std::string_view text) : HeavyTreeDAWGWithNaiveAnc<MapType>(DAWGBase(text)){}
     std::optional<int> get_node(std::string_view pattern) const override{ return HeavyTreeDAWG<MapType>::get_node(pattern); }
 private:
     inline int get_anc(int node, int k) const override{
@@ -249,7 +246,7 @@ private:
     }
 };
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyTreeDAWGWithExpAnc : HeavyTreeDAWG<MapType> {
     std::vector<std::vector<unsigned int>> anc;
 public:
@@ -265,7 +262,7 @@ public:
             }
         }
     }
-    explicit HeavyTreeDAWGWithExpAnc(std::string_view text) : HeavyTreeDAWG<MapType>(DAWGBase(text)){}
+    explicit HeavyTreeDAWGWithExpAnc(std::string_view text) : HeavyTreeDAWGWithExpAnc<MapType>(DAWGBase(text)){}
     std::optional<int> get_node(std::string_view pattern) const override{ return HeavyTreeDAWG<MapType>::get_node(pattern); }
 private:
     inline int get_anc(int node, int k) const override{
@@ -281,7 +278,7 @@ private:
     }
 };
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyTreeDAWGWithMemoAnc : HeavyTreeDAWG<MapType> {
     int n;
     std::vector<unsigned int> anc;
@@ -298,7 +295,7 @@ public:
             }
         }
     }
-    explicit HeavyTreeDAWGWithMemoAnc(std::string_view text) : HeavyTreeDAWG<MapType>(DAWGBase(text)){}
+    explicit HeavyTreeDAWGWithMemoAnc(std::string_view text) : HeavyTreeDAWGWithMemoAnc<MapType>(DAWGBase(text)){}
     std::optional<int> get_node(std::string_view pattern) const override{
         int node = 0;
         for(unsigned int i = 0; i < pattern.length();){
@@ -334,7 +331,7 @@ private:
 };
 
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyTreeDAWGWithHPDAnc : HeavyTreeDAWG<MapType> {
     int source;
     std::vector<unsigned int> path_remain;
@@ -406,17 +403,17 @@ public:
 
         for(int x = 0; x < n; ++x){
             this->heads[path_nodes_inv[x]] = heads_tmp[x];
-            for(auto& y : light_edges_tmp[x].values){
+            for(auto &[key_, y] : light_edges_tmp[x].items()){
                 y = path_nodes_inv[y];
             }
-            this->light_edges[path_nodes_inv[x]] = light_edges_tmp[x];
+            this->light_edges[path_nodes_inv[x]] = std::move(light_edges_tmp[x]);
             this->heavy_edge_to[path_nodes_inv[x]] = path_nodes_inv[heavy_edge_to_tmp[x]];
         }
         source = path_nodes_inv[0];
         this->sink = path_nodes_inv[this->sink];
         assert(cnt == n);
     }
-    explicit HeavyTreeDAWGWithHPDAnc(std::string_view text) : HeavyTreeDAWG<MapType>(DAWGBase(text)){}
+    explicit HeavyTreeDAWGWithHPDAnc(std::string_view text) : HeavyTreeDAWGWithHPDAnc<MapType>(DAWGBase(text)){}
     std::optional<int> get_node(std::string_view pattern) const override{
         unsigned int node = source;
         for(unsigned int i = 0; i < pattern.length();){
@@ -479,7 +476,7 @@ private:
     }
 };
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<OrderedMap, MapType>
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyPathDAWG : FullTextIndex {
     std::string hh_string;
     std::vector<MapType<unsigned char, int>> light_edges;
@@ -490,7 +487,7 @@ public:
         std::vector<int> tps_order(n);
         std::vector<int> in_degree(n, 0);
         for(int x = 0; x < n; ++x){
-            for(auto [_key, y] : base.nodes[x].ch){
+            for(auto [_key, y] : base.nodes[x].ch.items()){
                 ++in_degree[y];
             }
         }
@@ -503,7 +500,7 @@ public:
             que.pop();
             tps_order[cnt] = x;
             ++cnt;
-            for(auto [_key, y] : base.nodes[x].ch){
+            for(auto [_key, y] : base.nodes[x].ch.items()){
                 --in_degree[y];
                 if(in_degree[y] == 0){
                     que.push(y);
@@ -514,14 +511,13 @@ public:
         std::vector<int> path_cnt(n, 0);
         sink = tps_order.back();
         assert(sink == base.node_ids.back());
-        assert(base.nodes[sink].ch.empty());
         path_cnt[sink] = 1;
         std::vector<int> heavy_edge_to(n, 0);
         std::vector<unsigned char> heavy_edge_label(n);
         for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
             int x = *it;
             int path_cnt_max = 0;
-            for(auto [key, y] : base.nodes[x].ch){
+            for(auto [key, y] : base.nodes[x].ch.items()){
                 path_cnt[x] += path_cnt[y];
                 if(path_cnt_max < path_cnt[y]){
                     path_cnt_max = path_cnt[y];
@@ -596,7 +592,7 @@ public:
             int x = path_nodes[i];
             std::vector<unsigned char> keys;
             std::vector<int> values;
-            for(auto [key, y] : base.nodes[x].ch){
+            for(auto [key, y] : base.nodes[x].ch.items()){
                 if(key != hh_string[i]){
                     keys.emplace_back(key);
                     values.emplace_back(path_nodes_inv[y]);
