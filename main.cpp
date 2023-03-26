@@ -111,15 +111,19 @@ using MapType = BinarySearchMap<K, V>;
 
 int main(){
     std::string out_file_path = "./data/output.txt";
-    std::string data_path = "./data/dna.1MB";
-    std::ofstream out_file(out_file_path);
-
-    bench<
-            HeavyPathDAWG<MapType>,
-            HeavyTreeDAWGWithNaiveAnc<MapType>,
-            HeavyTreeDAWGWithMemoAnc<MapType>,
-            HeavyTreeDAWGWithExpAnc<MapType>,
-            SimpleDAWG<MapType>
-    >(data_path, out_file);
+    for(auto data_path : {
+        "./data/english",
+        "./data/sources",
+        "./data/dna",
+    }){
+        std::ofstream out_file(out_file_path);
+        bench<
+                HeavyPathDAWG<MapType>,
+                SimpleDAWG<MapType>,
+                HeavyTreeDAWGWithNaiveAnc<MapType>,
+                HeavyTreeDAWGWithExpAnc<MapType>,
+                HeavyTreeDAWGWithMemoAnc<MapType>,
+        >(data_path, out_file);
+    }
     return 0;
 }
