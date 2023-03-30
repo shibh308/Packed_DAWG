@@ -36,6 +36,19 @@ inline ULong get_head(std::string_view str, unsigned int i){
     }
 }
 
+inline unsigned int get_lcp(std::string_view str1, unsigned int ofs1, std::string_view str2, unsigned int ofs2, unsigned int max_len){
+    unsigned int max_iter = max_len / ALPHA;
+    auto* ptr1 = reinterpret_cast<const ULong*>(str1.data() + ofs1);
+    auto* ptr2 = reinterpret_cast<const ULong*>(str2.data() + ofs2);
+    int i = 0;
+    while(*ptr1 == *ptr2 && i < max_iter){
+        ++i;
+        ++ptr1;
+        ++ptr2;
+    }
+    return std::min(i * ALPHA + get_lsb_pos(*ptr1 ^ *ptr2), max_len);
+}
+
 struct DAWGBase{
     struct Node{
         HashMap<unsigned char, int> ch;
@@ -45,7 +58,8 @@ struct DAWGBase{
     };
 
     std::vector<Node> nodes;
-    std::vector<int> node_ids;
+    int final_node = 0;
+    // std::vector<int> node_ids;
 
     explicit DAWGBase(std::string_view text){
         nodes.emplace_back(0);
@@ -57,8 +71,9 @@ struct DAWGBase{
 
     void add_node(int i, unsigned char c){
         int new_node = nodes.size();
-        int target_node = (nodes.size() == 1 ? 0 : node_ids.back());
-        node_ids.emplace_back(new_node);
+        int target_node = final_node; // (nodes.size() == 1 ? 0 : node_ids.back());
+        // node_ids.emplace_back(new_node);
+        final_node = new_node;
         nodes.emplace_back(i + 1);
 
         for(; target_node != -1 &&
@@ -147,7 +162,7 @@ public:
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
         sink = tps_order.back();
-        assert(sink == base.node_ids.back());
+        // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
         std::vector<unsigned char> heavy_edge_label(n, 0);
         heavy_edge_to.resize(n, 0);
@@ -510,7 +525,7 @@ public:
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
         sink = tps_order.back();
-        assert(sink == base.node_ids.back());
+        // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
         std::vector<int> heavy_edge_to(n, 0);
         std::vector<unsigned char> heavy_edge_label(n);
@@ -607,29 +622,20 @@ public:
     std::optional<int> get_node(std::string_view pattern) const override{
         unsigned int node = source;
         for(unsigned int i = 0; i < pattern.length();){
-            ULong pattern_byte = get_head(pattern, i);
-            ULong hh_byte = get_head(hh_string, node);
-            ULong xor_result = hh_byte ^ pattern_byte;
-            unsigned int lcp = std::min(get_lsb_pos(xor_result), static_cast<unsigned int>(pattern.length()) - i);
-            if(lcp == ALPHA){
-                node += ALPHA;
-                i += ALPHA;
+            int lcp = get_lcp(pattern, i, hh_string, node, pattern.length() - i);
+            node += lcp;
+            i += lcp;
+            if(i == pattern.length()){
+                break;
+            }
+            auto light_to = light_edges[node].find(pattern[i]);
+            if(light_to){
+                node = light_to.value();
             }
             else{
-                node += lcp;
-                i += lcp;
-                if(i == pattern.length()){
-                    break;
-                }
-                auto light_to = light_edges[node].find(pattern[i]);
-                if(light_to){
-                    node = light_to.value();
-                }
-                else{
-                    return std::nullopt;
-                }
-                ++i;
+                return std::nullopt;
             }
+            ++i;
         }
         return node;
     }
