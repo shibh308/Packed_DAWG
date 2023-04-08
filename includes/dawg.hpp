@@ -9,7 +9,6 @@
 
 #include "full_text_index.hpp"
 #include "level_ancestor.hpp"
-#include "level_ancestor_ladder.hpp"
 #include "map.hpp"
 
 
@@ -135,7 +134,6 @@ protected:
     std::vector<int> heavy_edge_to;
     std::vector<MapType<unsigned char, int>> light_edges;
     std::vector<int> poses;
-    int sink;
 public:
     explicit HeavyTreeDAWG(std::string_view text) : text(text), text_view(text) {
         auto base = DAWGBase(text_view);
@@ -167,7 +165,7 @@ public:
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
         poses.resize(n, -1);
-        sink = tps_order.back();
+        int sink = tps_order.back();
         // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
         poses[sink] = text.size();
@@ -231,33 +229,18 @@ public:
     }
 };
 
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
-class HeavyTreeDAWGWithFastLCA : HeavyTreeDAWG<MapType> {
+template <template <typename, typename> typename MapType, typename LAType> requires std::is_base_of_v<LevelAncestor, LAType>
+class HeavyTreeDAWGWithLA : HeavyTreeDAWG<MapType> {
 private:
-    LevelAncestorByLadder la;
+    LAType la;
 public:
-    explicit HeavyTreeDAWGWithFastLCA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
+    explicit HeavyTreeDAWGWithLA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
     }
     std::optional<int> get_node(std::string_view pattern) const override{
         return HeavyTreeDAWG<MapType>::get_node(pattern);
     }
     inline int get_anc(int node, int k) const override{
-        return la.get_anc(node, k).value();
-    }
-};
-
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
-class HeavyTreeDAWGWithSuperFastLCA : HeavyTreeDAWG<MapType> {
-private:
-    LevelAncestorByBP la;
-public:
-    explicit HeavyTreeDAWGWithSuperFastLCA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
-    }
-    std::optional<int> get_node(std::string_view pattern) const override{
-        return HeavyTreeDAWG<MapType>::get_node(pattern);
-    }
-    inline int get_anc(int node, int k) const override{
-        return la.get_anc(node, k).value();
+        return la.get_anc(node, k);
     }
 };
 
@@ -266,7 +249,7 @@ template <template <typename, typename> typename MapType> // requires std::is_ba
 class HeavyPathDAWG : FullTextIndex {
     std::string hh_string;
     std::vector<MapType<unsigned char, int>> light_edges;
-    int source, sink;
+    int source;
 public:
     explicit HeavyPathDAWG(const DAWGBase& base){
         int n = base.nodes.size();
@@ -295,7 +278,7 @@ public:
         }
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
-        sink = tps_order.back();
+        int sink = tps_order.back();
         // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
         std::vector<int> heavy_edge_to(n, -1);
@@ -321,7 +304,7 @@ public:
             }
         }
         cnt = 0;
-        que.emplace(this->sink);
+        que.emplace(sink);
         while(!que.empty()){
             int x = que.front();
             tps_order[cnt] = x;

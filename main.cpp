@@ -112,14 +112,11 @@ int main(){
     }){
         std::ofstream out_file(out_file_path);
         bench<
+                SimpleDAWG<MapType>,
                 HeavyTreeDAWG<MapType>,
-                HeavyTreeDAWGWithFastLCA<MapType>,
-                HeavyTreeDAWGWithSuperFastLCA<MapType>,
+                HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>,
+                HeavyTreeDAWGWithLA<MapType, LevelAncestorByBP>,
                 HeavyPathDAWG<MapType>
-                // SimpleDAWG<MapType>,
-                // HeavyTreeDAWGWithNaiveAnc<MapType>,
-                // HeavyTreeDAWGWithExpAnc<MapType>,
-                // HeavyTreeDAWGWithMemoAnc<MapType>
         >(data_path, out_file);
     }
     return 0;
