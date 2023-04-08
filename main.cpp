@@ -9,7 +9,6 @@
 #include <cxxabi.h>
 
 
-#include "includes/suffix_tree.hpp"
 #include "includes/full_text_index.hpp"
 #include "includes/dawg.hpp"
 
@@ -75,13 +74,6 @@ public:
         }
 
         benchmark_text(pattern_poses, pattern_length);
-
-        /*
-        std::clog << "constructing " << type_name<DAWGBase>() << std::endl;
-        SuffixTree suffix_tree(text_view);
-        std::clog << std::endl;
-        benchmark_text<SuffixTree>(suffix_tree, pattern_poses, pattern_length);
-         */
     }
 };
 
@@ -96,9 +88,11 @@ void _bench(std::string data_path, std::ofstream& out_file){
     Benchmark<Index> bench(text, data_path.substr(data_path.rfind('/') + 1), out_file);
 
     constexpr int num_queries = 10000;
-    for(int pattern_length = 10; pattern_length <= 10'000; pattern_length *= 10){
-        bench.run(num_queries, pattern_length);
-    }
+    bench.run(num_queries, 10000);
+
+    // for(int pattern_length = 10; pattern_length <= 10'000; pattern_length *= 10){
+        // bench.run(num_queries, pattern_length);
+    // }
 }
 
 template<typename... Indexes> requires (std::is_base_of_v<FullTextIndex, Indexes> && ...)
@@ -118,11 +112,14 @@ int main(){
     }){
         std::ofstream out_file(out_file_path);
         bench<
-                HeavyPathDAWG<MapType>,
-                SimpleDAWG<MapType>,
-                HeavyTreeDAWGWithNaiveAnc<MapType>,
-                HeavyTreeDAWGWithExpAnc<MapType>,
-                HeavyTreeDAWGWithMemoAnc<MapType>,
+                HeavyTreeDAWG<MapType>,
+                HeavyTreeDAWGWithFastLCA<MapType>,
+                HeavyTreeDAWGWithSuperFastLCA<MapType>,
+                HeavyPathDAWG<MapType>
+                // SimpleDAWG<MapType>,
+                // HeavyTreeDAWGWithNaiveAnc<MapType>,
+                // HeavyTreeDAWGWithExpAnc<MapType>,
+                // HeavyTreeDAWGWithMemoAnc<MapType>
         >(data_path, out_file);
     }
     return 0;

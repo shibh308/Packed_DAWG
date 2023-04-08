@@ -8,6 +8,8 @@
 #include <cstring>
 
 #include "full_text_index.hpp"
+#include "level_ancestor.hpp"
+#include "level_ancestor_ladder.hpp"
 #include "map.hpp"
 
 
@@ -53,13 +55,12 @@ struct DAWGBase{
     struct Node{
         HashMap<unsigned char, int> ch;
         int slink, len;
-
         explicit Node(int len) : slink(-1), len(len){}
     };
 
     std::vector<Node> nodes;
-    int final_node = 0;
-    // std::vector<int> node_ids;
+    // int final_node = 0;
+    std::vector<int> node_ids;
 
     explicit DAWGBase(std::string_view text){
         nodes.emplace_back(0);
@@ -71,9 +72,9 @@ struct DAWGBase{
 
     void add_node(int i, unsigned char c){
         int new_node = nodes.size();
-        int target_node = final_node; // (nodes.size() == 1 ? 0 : node_ids.back());
-        // node_ids.emplace_back(new_node);
-        final_node = new_node;
+        int target_node = (nodes.size() == 1 ? 0 : node_ids.back());
+        node_ids.emplace_back(new_node);
+        // final_node = new_node;
         nodes.emplace_back(i + 1);
 
         for(; target_node != -1 &&
@@ -129,13 +130,17 @@ public:
 template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyTreeDAWG : FullTextIndex {
 protected:
+    std::string text;
+    std::string_view text_view;
     std::vector<int> heavy_edge_to;
     std::vector<MapType<unsigned char, int>> light_edges;
-    std::vector<ULong> heads;
+    std::vector<int> poses;
     int sink;
 public:
-    explicit HeavyTreeDAWG(const DAWGBase& base){
+    explicit HeavyTreeDAWG(std::string_view text) : text(text), text_view(text) {
+        auto base = DAWGBase(text_view);
         int n = base.nodes.size();
+
         std::vector<int> tps_order(n);
         std::vector<int> in_degree(n, 0);
         for(int x = 0; x < n; ++x){
@@ -161,11 +166,13 @@ public:
         }
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
+        poses.resize(n, -1);
         sink = tps_order.back();
         // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
+        poses[sink] = text.size();
         std::vector<unsigned char> heavy_edge_label(n, 0);
-        heavy_edge_to.resize(n, 0);
+        heavy_edge_to.resize(n, -1);
         for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
             int x = *it;
             int path_cnt_max = 0;
@@ -174,6 +181,8 @@ public:
                 if(path_cnt_max < path_cnt[y]){
                     path_cnt_max = path_cnt[y];
                     heavy_edge_to[x] = y;
+                    assert(poses[y] != -1);
+                    poses[x] = poses[y] - 1;
                     heavy_edge_label[x] = key;
                 }
             }
@@ -190,306 +199,68 @@ public:
             }
             light_edges.emplace_back(keys, values);
         }
-
-        heads.resize(n);
-        heads[sink] = 0;
-        for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
-            int x = *it;
-            if(x != sink){
-                int y = heavy_edge_to[x];
-                heads[x] = heavy_edge_label[x] | (heads[y] << CHAR_BITS);
-            }
-        }
     }
-
-    explicit HeavyTreeDAWG(std::string_view text) : HeavyTreeDAWG(DAWGBase(text)){}
 
 public:
     std::optional<int> get_node(std::string_view pattern) const override{
-        int node = 0;
+        unsigned int node = 0;
         for(unsigned int i = 0; i < pattern.length();){
-            ULong pattern_byte = get_head(pattern, i);
-            ULong xor_result = heads[node] ^ pattern_byte;
-            unsigned int lcp = std::min(get_lsb_pos(xor_result), static_cast<unsigned int>(pattern.length()) - i);
-            if(lcp == ALPHA){
-                node = get_anc_alpha(node);
-                i += ALPHA;
-            }
-            else{
-                if(lcp != 0){
-                    node = get_anc(node, lcp);
-                    i += lcp;
-                }
-                if(i == pattern.length()){
-                    break;
-                }
-                auto light_to = light_edges[node].find(pattern[i]);
-                if(light_to){
-                    node = light_to.value();
-                }
-                else{
-                    return std::nullopt;
-                }
-                ++i;
-            }
-        }
-        return node;
-    }
-    virtual inline int get_anc(int node, int k) const = 0;
-    virtual inline int get_anc_alpha(int node) const = 0;
-};
-
-
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
-class HeavyTreeDAWGWithNaiveAnc : HeavyTreeDAWG<MapType> {
-public:
-    explicit HeavyTreeDAWGWithNaiveAnc(const DAWGBase& base) : HeavyTreeDAWG<MapType>(base) {}
-    explicit HeavyTreeDAWGWithNaiveAnc(std::string_view text) : HeavyTreeDAWGWithNaiveAnc<MapType>(DAWGBase(text)){}
-    std::optional<int> get_node(std::string_view pattern) const override{ return HeavyTreeDAWG<MapType>::get_node(pattern); }
-private:
-    inline int get_anc(int node, int k) const override{
-        for(int i = 0; i < k; ++i){
-            node = this->heavy_edge_to[node];
-        }
-        return node;
-    }
-    inline int get_anc_alpha(int node) const override{
-        for(int i = 0; i < ALPHA; ++i){
-            node = this->heavy_edge_to[node];
-        }
-        return node;
-    }
-};
-
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
-class HeavyTreeDAWGWithExpAnc : HeavyTreeDAWG<MapType> {
-    std::vector<std::vector<unsigned int>> anc;
-public:
-    explicit HeavyTreeDAWGWithExpAnc(const DAWGBase& base) : HeavyTreeDAWG<MapType>(base) {
-        int n = this->heads.size();
-        anc.resize(LOG_ALPHA + 1, std::vector<unsigned int>(n));
-        for(int i = 0; i < n; ++i){
-            anc[0][i] = this->heavy_edge_to[i];
-        }
-        for(int k = 0; k < LOG_ALPHA; ++k){
-            for(int i = 0; i < n; ++i){
-                anc[k + 1][i] = anc[k][anc[k][i]];
-            }
-        }
-    }
-    explicit HeavyTreeDAWGWithExpAnc(std::string_view text) : HeavyTreeDAWGWithExpAnc<MapType>(DAWGBase(text)){}
-    std::optional<int> get_node(std::string_view pattern) const override{ return HeavyTreeDAWG<MapType>::get_node(pattern); }
-private:
-    inline int get_anc(int node, int k) const override{
-        for(unsigned int i = 0; i <= LOG_ALPHA && (1u << i) <= k; ++i){
-            if(static_cast<unsigned int>(k) & (1u << i)){
-                node = anc[i][node];
-            }
-        }
-        return node;
-    }
-    inline int get_anc_alpha(int node) const override{
-        return anc[LOG_ALPHA][node];
-    }
-};
-
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
-class HeavyTreeDAWGWithMemoAnc : HeavyTreeDAWG<MapType> {
-    int n;
-    std::vector<unsigned int> anc;
-public:
-    explicit HeavyTreeDAWGWithMemoAnc(const DAWGBase& base) : HeavyTreeDAWG<MapType>(base) {
-        n = this->heads.size();
-        anc.resize((ALPHA + 1) * n);
-        for(unsigned int i = 0; i < n; ++i){
-            anc[i] = i;
-        }
-        for(int k = 0; k < ALPHA; ++k){
-            for(unsigned int i = 0; i < n; ++i){
-                anc[i + (k + 1) * n] = anc[this->heavy_edge_to[i] + k * n];
-            }
-        }
-    }
-    explicit HeavyTreeDAWGWithMemoAnc(std::string_view text) : HeavyTreeDAWGWithMemoAnc<MapType>(DAWGBase(text)){}
-    std::optional<int> get_node(std::string_view pattern) const override{
-        int node = 0;
-        for(unsigned int i = 0; i < pattern.length();){
-            ULong pattern_byte = get_head(pattern, i);
-            ULong xor_result = this->heads[node] ^ pattern_byte;
-            unsigned int lcp = std::min(get_lsb_pos(xor_result), static_cast<unsigned int>(pattern.length()) - i);
-            if(lcp != 0){
-                node = anc[node + lcp * n];
-                i += lcp;
-            }
-            if(lcp != ALPHA){
-                if(i == pattern.length()){
-                    break;
-                }
-                auto light_to = this->light_edges[node].find(pattern[i]);
-                if(light_to){
-                    node = light_to.value();
-                }else{
-                    return std::nullopt;
-                }
-                ++i;
-            }
-        }
-        return node;
-    }
-private:
-    inline int get_anc(int node, int k) const override{
-        return anc[node + k * n];
-    }
-    inline int get_anc_alpha(int node) const override{
-        return anc[node + ALPHA * n];
-    }
-};
-
-
-template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
-class HeavyTreeDAWGWithHPDAnc : HeavyTreeDAWG<MapType> {
-    int source;
-    std::vector<unsigned int> path_remain;
-public:
-    explicit HeavyTreeDAWGWithHPDAnc(const DAWGBase& base) : HeavyTreeDAWG<MapType>(base) {
-        int n = this->heads.size();
-        std::vector<std::vector<int>> heavy_tree(n);
-        for(int x = 0; x < n; ++x){
-            if(x != this->sink){
-                heavy_tree[this->heavy_edge_to[x]].emplace_back(x);
-            }
-        }
-        std::vector<int> order(n);
-        int cnt = 0;
-        std::queue<int> que;
-        que.emplace(this->sink);
-        while(!que.empty()){
-            int x = que.front();
-            order[cnt] = x;
-            ++cnt;
-            que.pop();
-            for(auto y : heavy_tree[x]){
-                que.push(y);
-            }
-        }
-        std::vector<int> path_cnt(n, 0);
-        // root (source) direction
-        std::vector<int> hh_edge_source(n, -1);
-        // leaf (sink) direction
-        std::vector<int> hh_edge_sink(n, -1);
-        for(auto it = order.rbegin(); it != order.rend(); ++it){
-            int x = *it;
-            if(heavy_tree[x].empty()){
-                path_cnt[x] = 1;
-            }
-            else{
-                int path_cnt_max = 0;
-                for(auto y : heavy_tree[x]){
-                    if(path_cnt_max < path_cnt[y]){
-                        path_cnt_max = path_cnt[y];
-                        hh_edge_source[x] = y;
-                    }
-                    path_cnt[x] += path_cnt[y];
-                }
-                hh_edge_sink[hh_edge_source[x]] = x;
-            }
-        }
-        std::vector<int> path_nodes_inv(n);
-        path_remain.resize(n);
-        cnt = 0;
-        for(int i = 0; i < n; ++i){
-            if(hh_edge_source[i] == -1){
-                // heavy path start
-                std::vector<int> path;
-                for(int x = i; x != -1; x = hh_edge_sink[x]){
-                    path.emplace_back(x);
-                }
-                for(int j = 0; j < path.size(); ++j){
-                    path_nodes_inv[path[j]] = cnt;
-                    path_remain[cnt] = path.size() - j - 1;
-                    ++cnt;
-                }
-            }
-        }
-
-        auto light_edges_tmp = this->light_edges;
-        auto heads_tmp = this->heads;
-        auto heavy_edge_to_tmp = this->heavy_edge_to;
-
-        for(int x = 0; x < n; ++x){
-            this->heads[path_nodes_inv[x]] = heads_tmp[x];
-            for(auto &[key_, y] : light_edges_tmp[x].items()){
-                y = path_nodes_inv[y];
-            }
-            this->light_edges[path_nodes_inv[x]] = std::move(light_edges_tmp[x]);
-            this->heavy_edge_to[path_nodes_inv[x]] = path_nodes_inv[heavy_edge_to_tmp[x]];
-        }
-        source = path_nodes_inv[0];
-        this->sink = path_nodes_inv[this->sink];
-        assert(cnt == n);
-    }
-    explicit HeavyTreeDAWGWithHPDAnc(std::string_view text) : HeavyTreeDAWGWithHPDAnc<MapType>(DAWGBase(text)){}
-    std::optional<int> get_node(std::string_view pattern) const override{
-        unsigned int node = source;
-        for(unsigned int i = 0; i < pattern.length();){
-            ULong pattern_byte = get_head(pattern, i);
-            ULong xor_result = this->heads[node] ^ pattern_byte;
-            unsigned int lcp = std::min(get_lsb_pos(xor_result), static_cast<unsigned int>(pattern.length()) - i);
-            if(lcp != 0){
-                for(unsigned int k = lcp; k != 0;){
-                    int skip = std::min(path_remain[node], k);
-                    node += skip;
-                    k -= skip;
-                    if(k != 0){
-                        node = this->heavy_edge_to[node];
-                        --k;
-                    }
-                }
-                i += lcp;
-            }
+            int pos = poses[node];
+            int lcp = get_lcp(text_view, pos, pattern, i, std::min(text.length() - pos, pattern.length() - i));
+            node = get_anc(node, lcp);
+            i += lcp;
             if(i == pattern.length()){
                 break;
             }
-            if(lcp != ALPHA){
-                auto light_to = this->light_edges[node].find(pattern[i]);
-                if(light_to){
-                    node = light_to.value();
-                }
-                else{
-                    return std::nullopt;
-                }
-                ++i;
+            auto light_to = light_edges[node].find(pattern[i]);
+            if(light_to){
+                node = light_to.value();
             }
+            else{
+                return std::nullopt;
+            }
+            ++i;
         }
         return node;
     }
-private:
-    inline int get_anc(int node, int k) const override{
-        while(true){
-            int skip = path_remain[node];
-            if(k <= skip){
-                return node + k;
-            }
-            else{
-                node = this->heavy_edge_to[node + skip];
-                k -= skip + 1;
-            }
+    virtual inline int get_anc(int node, int k) const{
+        for(int i = 0; i < k; ++i){
+            node = heavy_edge_to[node];
         }
-    }
-    inline int get_anc_alpha(int node) const override{
-        int k = ALPHA;
-        while(true){
-            int skip = path_remain[node];
-            if(k <= skip){
-                return node + k;
-            }
-            else{
-                node = this->heavy_edge_to[node + skip];
-                k -= skip + 1;
-            }
-        }
+        return node;
     }
 };
+
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
+class HeavyTreeDAWGWithFastLCA : HeavyTreeDAWG<MapType> {
+private:
+    LevelAncestorByLadder la;
+public:
+    explicit HeavyTreeDAWGWithFastLCA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
+    }
+    std::optional<int> get_node(std::string_view pattern) const override{
+        return HeavyTreeDAWG<MapType>::get_node(pattern);
+    }
+    inline int get_anc(int node, int k) const override{
+        return la.get_anc(node, k).value();
+    }
+};
+
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
+class HeavyTreeDAWGWithSuperFastLCA : HeavyTreeDAWG<MapType> {
+private:
+    LevelAncestorByBP la;
+public:
+    explicit HeavyTreeDAWGWithSuperFastLCA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
+    }
+    std::optional<int> get_node(std::string_view pattern) const override{
+        return HeavyTreeDAWG<MapType>::get_node(pattern);
+    }
+    inline int get_anc(int node, int k) const override{
+        return la.get_anc(node, k).value();
+    }
+};
+
 
 template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyPathDAWG : FullTextIndex {
@@ -527,7 +298,7 @@ public:
         sink = tps_order.back();
         // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
-        std::vector<int> heavy_edge_to(n, 0);
+        std::vector<int> heavy_edge_to(n, -1);
         std::vector<unsigned char> heavy_edge_label(n);
         for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
             int x = *it;
