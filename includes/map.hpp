@@ -12,6 +12,7 @@ template<typename K, typename V>
 struct Map {
     virtual std::optional<V> find(K key) const = 0;
     virtual int size() const = 0;
+    virtual std::uint64_t num_bytes() const = 0;
 };
 
 template <typename T, typename U>
@@ -22,16 +23,14 @@ struct HashMap : Map<T, U> {
     std::uint64_t n, d;
 
     std::vector<std::pair<T, U>> v;
-    std::array<std::uint64_t, 4> exists;
 
     HashMap() : n(0), d(1),  v(2, std::make_pair(null, U())){
-        exists[0] = exists[1] = exists[2] = exists[3] = 0;
     }
     explicit HashMap(const std::vector<T>& keys, const std::vector<U>& values) : n(0), d(1), v(2, std::make_pair(null, U())){
-        exists[0] = exists[1] = exists[2] = exists[3] = 0;
         for(int i = 0; i < keys.size(); ++i){
             add(keys[i], values[i]);
         }
+        v.shrink_to_fit();
     }
 
     inline std::uint64_t hash(T key) const{return (z * key) & ((1u << d) - 1); }
@@ -56,7 +55,6 @@ struct HashMap : Map<T, U> {
         for(; v[i].first != null && v[i].first != x; i = (i + 1) & ((1u << d) - 1));
         n += v[i].first == null;
         v[i] = {x, val};
-        exists[i / 64] |= 1uLL << (i & 63u);
     }
 
     std::vector<std::pair<T, U>> items() const{
@@ -67,33 +65,25 @@ struct HashMap : Map<T, U> {
                 items.emplace_back(item);
             }
         }
-        /*
-        for(int i = 0; i < siz; ++i){
-            std::uint64_t flag = exists[i];
-            while(flag){
-                std::uint64_t xo = (flag & -flag);
-                items.emplace_back(v[i * 64 + std::bit_width(xo) - 1]);
-                flag &= ~xo;
-            }
-        }
-         */
         sort(items.begin(), items.end());
         return items;
     }
 
     void resize(){
-        exists[0] = exists[1] = exists[2] = exists[3] = 0;
         ++d;
         std::vector<std::pair<T, U>> old_table;
         swap(old_table, v);
         v.assign(1u << d, {null, U()});
-        assert(v.size() <= 256);
+        assert(v.size() <= 512);
         n = 0;
         for(auto item : old_table){
             if(item.first != null){
                 add(item.first, item.second);
             }
         }
+    }
+    std::uint64_t num_bytes() const{
+        return sizeof(n) + sizeof(d) + (v.capacity() * sizeof(std::pair<T, U>) + sizeof(std::size_t) * 3);
     }
 };
 
@@ -107,12 +97,16 @@ struct BinarySearchMap : Map<K, V> {
             keys.emplace_back(k);
             values.emplace_back(v);
         }
+        keys.shrink_to_fit();
+        values.shrink_to_fit();
     }
     explicit BinarySearchMap(const HashMap<K, V>& map){
         for(auto [k, v] : map.items()){
             keys.emplace_back(k);
             values.emplace_back(v);
         }
+        keys.shrink_to_fit();
+        values.shrink_to_fit();
     }
     BinarySearchMap(const std::vector<K>& keys, const std::vector<V>& values) : keys(keys), values(values){
         assert(keys.size() == values.size());
@@ -184,8 +178,13 @@ struct LinearSearchMap : Map<K, V> {
     int size() const override{
         return keys.size();
     }
+    std::uint64_t num_bytes() const{
+        return (keys.capacity() * sizeof(K) + sizeof(std::size_t) * 3)
+             + (values.capacity() * sizeof(V) + sizeof(std::size_t) * 3);
+    }
 };
 
+/*
 template <typename T, typename U>
 struct StdMapWrapper : Map<T, U>{
     std::map<T, U> map;
@@ -218,5 +217,6 @@ struct StdMapWrapper : Map<T, U>{
         return std::vector<std::pair<T, U>>(map.begin(), map.end());
     }
 };
+*/
 
 #endif //HEAVY_TREE_DAWG_MAP_HPP

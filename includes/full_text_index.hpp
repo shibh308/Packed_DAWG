@@ -11,6 +11,7 @@
 
 class FullTextIndex {
     virtual std::optional<int> get_node(std::string_view pattern) const = 0;
+    virtual std::uint64_t num_bytes() const = 0;
 };
 
 #endif //HEAVY_TREE_DAWG_FULL_TEXT_INDEX_HPP

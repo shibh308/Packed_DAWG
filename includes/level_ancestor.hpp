@@ -9,6 +9,7 @@
 
 class LevelAncestor{
     virtual inline int get_anc(int x, unsigned int k) const = 0;
+    virtual std::uint64_t num_bytes() const = 0;
 };
 
 class LevelAncestorByLadder : LevelAncestor{
@@ -92,6 +93,12 @@ public:
                 heavy_path.emplace_back(parent_vec[heavy_path.back()]);
             }
         }
+        heavy_pathes.shrink_to_fit();
+        for(auto& path : heavy_pathes){
+            path.shrink_to_fit();
+        }
+        heavy_path_idx.shrink_to_fit();
+        pos_in_heavy_path.shrink_to_fit();
     }
     inline int get_anc(int x, unsigned int k) const override{
         while(k != 0 && x != root){
@@ -108,6 +115,17 @@ public:
         }
         assert(k == 0);
         return x;
+    }
+    virtual std::uint64_t num_bytes() const{
+        // about 4|V| words
+        std::uint64_t size = sizeof(root);
+        size += sizeof(std::size_t) * 3;
+        for(auto& path : heavy_pathes){
+            size += (path.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        }
+        size += (heavy_path_idx.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        size += (pos_in_heavy_path.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        return size;
     }
 };
 
@@ -164,9 +182,21 @@ public:
                 rich_bp.level_anc(i, 1);
             }
         }
+        indexes.shrink_to_fit();
+        indexes_inv.shrink_to_fit();
     }
     inline int get_anc(int x, unsigned int k) const override{
         return indexes_inv[rich_bp.level_anc(indexes[x], k)];
+    }
+    virtual std::uint64_t num_bytes() const{
+        // about 2|V| words + 2|V| + o(n) bits
+        std::uint64_t size;
+        size += (indexes.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        size += (indexes_inv.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        std::ofstream out("/dev/null");
+        size += v.serialize(out);
+        size += rich_bp.serialize(out);
+        return size;
     }
 };
 

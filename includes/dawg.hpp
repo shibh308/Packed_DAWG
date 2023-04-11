@@ -58,22 +58,21 @@ struct DAWGBase{
     };
 
     std::vector<Node> nodes;
-    // int final_node = 0;
-    std::vector<int> node_ids;
+    int final_node = 0;
 
     explicit DAWGBase(std::string_view text){
         nodes.emplace_back(0);
         for(int i = 0; i < text.size(); ++i){
             add_node(i, text[i]);
         }
+        nodes.shrink_to_fit();
         std::clog << "DAWG Base construct end" << std::endl;
     }
 
     void add_node(int i, unsigned char c){
         int new_node = nodes.size();
-        int target_node = (nodes.size() == 1 ? 0 : node_ids.back());
-        node_ids.emplace_back(new_node);
-        // final_node = new_node;
+        int target_node = (nodes.size() == 1 ? 0 : final_node);
+        final_node = new_node;
         nodes.emplace_back(i + 1);
 
         for(; target_node != -1 &&
@@ -109,6 +108,7 @@ public:
         for(auto& node : base.nodes){
             children.emplace_back(node.ch);
         }
+        children.shrink_to_fit();
     }
     explicit SimpleDAWG(std::string_view text) : SimpleDAWG(DAWGBase(text)) {}
     std::optional<int> get_node(std::string_view pattern) const override {
@@ -123,6 +123,14 @@ public:
             }
         }
         return node;
+    }
+    virtual std::uint64_t num_bytes() const{
+        std::uint64_t size = 0;
+        size += 3 * sizeof(std::size_t);
+        for(auto& map : children){
+            size += map.num_bytes();
+        }
+        return size;
     }
 };
 
@@ -197,6 +205,9 @@ public:
             }
             light_edges.emplace_back(keys, values);
         }
+        heavy_edge_to.shrink_to_fit();
+        light_edges.shrink_to_fit();
+        poses.shrink_to_fit();
     }
 
 public:
@@ -227,6 +238,18 @@ public:
         }
         return node;
     }
+    virtual std::uint64_t num_bytes() const{
+        std::uint64_t size = 0;
+        size += text.capacity() * sizeof(unsigned char) + 3 * sizeof(std::size_t);
+        size += 2 * sizeof(std::size_t);
+        size += heavy_edge_to.capacity() * sizeof(int) + 3 * sizeof(std::size_t);
+        size += 3 * sizeof(std::size_t);
+        for(auto& map : light_edges){
+            size += map.num_bytes();
+        }
+        size += poses.size() * sizeof(int) + 3 * sizeof(std::size_t);
+        return size;
+    }
 };
 
 template <template <typename, typename> typename MapType, typename LAType> requires std::is_base_of_v<LevelAncestor, LAType>
@@ -235,12 +258,17 @@ private:
     LAType la;
 public:
     explicit HeavyTreeDAWGWithLA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
+        this->heavy_edge_to.clear();
+        this->heavy_edge_to.shrink_to_fit();
     }
     std::optional<int> get_node(std::string_view pattern) const override{
         return HeavyTreeDAWG<MapType>::get_node(pattern);
     }
     inline int get_anc(int node, int k) const override{
         return la.get_anc(node, k);
+    }
+    virtual std::uint64_t num_bytes() const{
+        return HeavyTreeDAWG<MapType>::num_bytes() + la.num_bytes();
     }
 };
 
@@ -371,6 +399,7 @@ public:
         }
         source = path_nodes_inv[0];
         sink = path_nodes_inv[sink];
+        light_edges.shrink_to_fit();
     }
     explicit HeavyPathDAWG(std::string_view text) : HeavyPathDAWG(DAWGBase(text)){}
     std::optional<int> get_node(std::string_view pattern) const override{
@@ -393,7 +422,16 @@ public:
         }
         return node;
     }
+    virtual std::uint64_t num_bytes() const{
+        std::uint64_t size = 0;
+        size += sizeof(int);
+        size += hh_string.capacity() * sizeof(unsigned char) + 3 * sizeof(std::uint64_t);
+        size += 3 * sizeof(std::uint64_t);
+        for(auto& x : light_edges){
+            size += x.num_bytes();
+        }
+        return size;
+    }
 };
-
 
 #endif //HEAVY_TREE_DAWG_DAWG_HPP

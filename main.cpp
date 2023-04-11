@@ -1,5 +1,4 @@
 #include <iostream>
-#include <fstream>
 #include <cassert>
 #include <chrono>
 #include <string>
@@ -7,6 +6,9 @@
 #include <random>
 #include <vector>
 #include <cxxabi.h>
+
+#include <cstdio>
+#include <cstdlib>
 
 
 #include "includes/full_text_index.hpp"
@@ -84,15 +86,19 @@ void _bench(std::string data_path, std::ofstream& out_file){
     std::ifstream file(data_path);
     assert(file.is_open());
     std::string text = std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    std::clog << "constructing..." << std::endl;
+    text.shrink_to_fit();
+    std::clog << "constructing...: " << text.size() << std::endl;
     Benchmark<Index> bench(text, data_path.substr(data_path.rfind('/') + 1), out_file);
 
-    constexpr int num_queries = 10000;
-    bench.run(num_queries, 10000);
+    constexpr int num_queries = 100'000;
+    // bench.run(num_queries, 100000);
 
-    // for(int pattern_length = 10; pattern_length <= 10'000; pattern_length *= 10){
-        // bench.run(num_queries, pattern_length);
-    // }
+    std::vector<int> pattern_lengthes = {
+            1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 1000000
+    };
+    for(auto pattern_length : pattern_lengthes){
+        bench.run(num_queries, pattern_length);
+    }
 }
 
 template<typename... Indexes> requires (std::is_base_of_v<FullTextIndex, Indexes> && ...)
@@ -100,24 +106,102 @@ void bench(std::string data_path, std::ofstream& out_file){
     (_bench<Indexes>(data_path, out_file), ...);
 }
 
-template<typename K, typename V>
-using MapType = BinarySearchMap<K, V>;
+template<typename Index> requires std::is_base_of_v<FullTextIndex, Index>
+std::pair<Index, int> get_index(std::string data_path, int length_limit){
+    std::clog << "loading: " << data_path << std::endl;
+    std::ifstream file(data_path);
+    assert(file.is_open());
+    std::string text = std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if(length_limit != -1){
+        assert(length_limit <= text.length());
+        text.resize(length_limit);
+    }
+    text.shrink_to_fit();
+    Index index(text);
+    return {std::move(index), text.length()};
+    // return Index("text");
+}
 
-int main(){
-    std::string out_file_path = "./data/output.txt";
-    for(auto data_path : {
-        "./data/english",
-        "./data/sources",
-        "./data/dna",
-    }){
+/*
+long long process_size() {
+    FILE* fp = std::fopen("/proc/self/statm", "r");
+    long long tmp, vm;
+    fscanf(fp, "%lld %lld ", &tmp, &vm);
+    return vm * getpagesize();
+}
+ */
+
+template<typename Index> requires std::is_base_of_v<FullTextIndex, Index>
+void _bench_memory(std::string data_path, std::ofstream& out_file, int length_limit){
+    std::cout << type_name<Index>() << std::endl;
+    auto [index, text_length] = get_index<Index>(data_path, length_limit);
+    std::string file_name = data_path.substr(data_path.rfind('/') + 1);
+    out_file << type_name<Index>() << "," << file_name << "," << text_length << "," << index.num_bytes() << std::endl;
+    std::clog << "length: " << text_length << std::endl;
+    std::clog << "memory: " << index.num_bytes() / (1024.0 * 1024.0) << " [MiB]" << std::endl;
+}
+
+template<typename... Indexes> requires (std::is_base_of_v<FullTextIndex, Indexes> && ...)
+void bench_memory(std::string data_path, std::ofstream& out_file, int length_limit){
+    (_bench_memory<Indexes>(data_path, out_file, length_limit), ...);
+}
+
+template<typename K, typename V>
+using MapType = HashMap<K, V>;
+
+int main(int argc, char** argv){
+    if(argc == 1){
+        std::string out_file_path = "./data/output.txt";
         std::ofstream out_file(out_file_path);
-        bench<
-                SimpleDAWG<MapType>,
-                HeavyTreeDAWG<MapType>,
-                HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>,
-                HeavyTreeDAWGWithLA<MapType, LevelAncestorByBP>,
-                HeavyPathDAWG<MapType>
-        >(data_path, out_file);
+        for(auto data_path : {
+            "./data/english.10MiB",
+            "./data/dna.10MiB",
+            "./data/sources.10MiB",
+        }){
+            bench<
+                    SimpleDAWG<MapType>,
+                    HeavyTreeDAWG<MapType>,
+                    HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>,
+                    HeavyTreeDAWGWithLA<MapType, LevelAncestorByBP>
+            >(data_path, out_file);
+        }
+    }
+    else{
+        std::string out_file_path = "./data/output_memory.txt";
+        std::ofstream out_file(out_file_path, std::ios_base::app);
+        assert(argc >= 3);
+        std::string data_path;
+        if(strcmp(argv[1], "english") == 0){
+            data_path = "./data/english.10MiB";
+        }
+        else if(strcmp(argv[1], "dna") == 0){
+            data_path = "./data/dna.10MiB";
+        }
+        else if(strcmp(argv[1], "sources") == 0){
+            data_path = "./data/sources.10MiB";
+        }
+        assert(!data_path.empty());
+
+        int length_limit = -1;
+        if(argc >= 4){
+            length_limit = atoi(argv[3]);
+        }
+
+        if(strcmp(argv[2], "Simple") == 0){
+            bench_memory<SimpleDAWG<MapType>>(data_path, out_file, length_limit);
+        }
+        else if(strcmp(argv[2], "HeavyTree") == 0){
+            bench_memory<HeavyTreeDAWG<MapType>>(data_path, out_file, length_limit);
+        }
+        else if(strcmp(argv[2], "HeavyTreeLadder") == 0){
+            bench_memory<HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>>(data_path, out_file, length_limit);
+        }
+        else if(strcmp(argv[2], "HeavyTreeBP") == 0){
+            bench_memory<HeavyTreeDAWGWithLA<MapType, LevelAncestorByBP>>(data_path, out_file, length_limit);
+        }
+        else if(strcmp(argv[2], "HeavyPath") == 0){
+            bench_memory<HeavyPathDAWG<MapType>>(data_path, out_file, length_limit);
+        }
     }
     return 0;
 }
