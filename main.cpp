@@ -159,10 +159,11 @@ int main(int argc, char** argv){
             "./data/sources.10MiB",
         }){
             bench<
+                    HeavyTreeDAWGWithLABP<MapType>,
                     SimpleDAWG<MapType>,
                     HeavyTreeDAWG<MapType>,
                     HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>,
-                    HeavyTreeDAWGWithLA<MapType, LevelAncestorByBP>
+                    HeavyPathDAWG<MapType>
             >(data_path, out_file);
         }
     }

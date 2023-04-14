@@ -18,7 +18,6 @@ constexpr unsigned int CHAR_BITS = 8;
 constexpr unsigned int ALPHA = 8; // WORD_SIZE / CHAR_BITS;
 constexpr unsigned int LOG_ALPHA = 3;
 
-
 inline unsigned int get_lsb_pos(ULong val){
     if(val == 0){
         return ALPHA;
@@ -126,7 +125,7 @@ public:
     }
     virtual std::uint64_t num_bytes() const{
         std::uint64_t size = 0;
-        size += 3 * sizeof(std::size_t);
+        size += 2 * sizeof(std::size_t);
         for(auto& map : children){
             size += map.num_bytes();
         }
@@ -240,17 +239,195 @@ public:
     }
     virtual std::uint64_t num_bytes() const{
         std::uint64_t size = 0;
-        size += text.capacity() * sizeof(unsigned char) + 3 * sizeof(std::size_t);
+        size += text.capacity() * sizeof(unsigned char) + 2 * sizeof(std::size_t);
         size += 2 * sizeof(std::size_t);
-        size += heavy_edge_to.capacity() * sizeof(int) + 3 * sizeof(std::size_t);
-        size += 3 * sizeof(std::size_t);
+        size += heavy_edge_to.capacity() * sizeof(int) + 2 * sizeof(std::size_t);
+        size += 2 * sizeof(std::size_t);
         for(auto& map : light_edges){
             size += map.num_bytes();
         }
-        size += poses.size() * sizeof(int) + 3 * sizeof(std::size_t);
+        size += poses.size() * sizeof(int) + 2 * sizeof(std::size_t);
         return size;
     }
 };
+
+template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
+class HeavyTreeDAWGWithLABP : FullTextIndex {
+protected:
+    std::string text;
+    std::string_view text_view;
+    int source;
+    std::vector<MapType<unsigned char, int>> light_edges;
+    std::vector<int> poses;
+    sdsl::bit_vector bp;
+    sdsl::bp_support_sada<> rich_bp;
+public:
+    explicit HeavyTreeDAWGWithLABP(std::string_view text) : text(text), text_view(text) {
+        auto base = DAWGBase(text_view);
+        int n = base.nodes.size();
+
+        std::vector<int> tps_order(n);
+        std::vector<int> in_degree(n, 0);
+        for(int x = 0; x < n; ++x){
+            for(auto [_key, y] : base.nodes[x].ch.items()){
+                ++in_degree[y];
+            }
+        }
+        std::queue<int> que;
+        que.emplace(0);
+        assert(in_degree[0] == 0);
+        int cnt = 0;
+        while(!que.empty()){
+            int x = que.front();
+            que.pop();
+            tps_order[cnt] = x;
+            ++cnt;
+            for(auto [_key, y] : base.nodes[x].ch.items()){
+                --in_degree[y];
+                if(in_degree[y] == 0){
+                    que.push(y);
+                }
+            }
+        }
+        assert(tps_order.size() == n);
+        std::vector<int> path_cnt(n, 0);
+        poses.resize(n, -1);
+        int sink = tps_order.back();
+        // assert(sink == base.node_ids.back());
+        path_cnt[sink] = 1;
+        poses[sink] = text.size();
+        std::vector<unsigned char> heavy_edge_label(n, 0);
+        std::vector<int> heavy_edge_to(n, -1);
+        for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
+            int x = *it;
+            int path_cnt_max = 0;
+            for(auto [key, y] : base.nodes[x].ch.items()){
+                path_cnt[x] += path_cnt[y];
+                if(path_cnt_max < path_cnt[y]){
+                    path_cnt_max = path_cnt[y];
+                    heavy_edge_to[x] = y;
+                    assert(poses[y] != -1);
+                    poses[x] = poses[y] - 1;
+                    heavy_edge_label[x] = key;
+                }
+            }
+            assert(1 <= path_cnt[x] && path_cnt[x] <= n);
+        }
+        for(int x = 0; x < n; ++x){
+            std::vector<unsigned char> keys;
+            std::vector<int> values;
+            for(auto [key, y] : base.nodes[x].ch.items()){
+                if(heavy_edge_label[x] != key){
+                    keys.emplace_back(key);
+                    values.emplace_back(y);
+                }
+            }
+            light_edges.emplace_back(keys, values);
+        }
+
+        // TODO
+        int root;
+        std::vector<int> indexes(2 * n, -1);
+        std::vector<std::vector<int>> tree(n);
+        for(int i = 0; i < n; ++i){
+            if(heavy_edge_to[i] == -1){
+                root = i;
+                continue;
+            }
+            assert(0 <= heavy_edge_to[i] && heavy_edge_to[i] < n);
+            tree[heavy_edge_to[i]].emplace_back(i);
+        }
+
+        bp = sdsl::bit_vector (2 * n, 0);
+
+        cnt = 0;
+        int cnt2 = 0;
+        std::vector<int> indexes_fl(n, 0);
+        std::stack<std::pair<int, bool>> stack;
+        stack.emplace(root, false);
+        stack.emplace(root, true);
+        while(!stack.empty()){
+            auto [x, fl] = stack.top();
+            stack.pop();
+            if(fl){
+                indexes[x] = cnt;
+                indexes_fl[x] = cnt2;
+                bp[cnt] = fl;
+                ++cnt;
+                ++cnt2;
+                for(auto y : tree[x]){
+                    stack.emplace(y, false);
+                    stack.emplace(y, true);
+                }
+            }
+            else{
+                bp[cnt] = fl;
+                ++cnt;
+            }
+        }
+        rich_bp = sdsl::bp_support_sada<>(&bp);
+        source = indexes[0];
+
+        // TODO: 2n -> n (use select)
+        {
+            auto light_edges_tmp = light_edges;
+            auto poses_tmp = poses;
+            light_edges.clear();
+            light_edges.resize(n);
+            poses.clear();
+            poses.resize(n);
+            for(int i = 0; i < n; ++i){
+                std::vector<unsigned char> keys;
+                std::vector<int> values;
+                for(auto [k, v] : light_edges_tmp[i].items()){
+                    keys.emplace_back(k);
+                    values.emplace_back(indexes[v]);
+                }
+                light_edges[indexes_fl[i]] = MapType(keys, values);
+                poses[indexes_fl[i]] = poses_tmp[i];
+            }
+        }
+    }
+
+public:
+    std::optional<int> get_node(std::string_view pattern) const override{
+        unsigned int node = source;
+        for(unsigned int i = 0; i < pattern.length();){
+            int pos = poses[rich_bp.rank(node-1)];
+            int lcp = get_lcp(text_view, pos, pattern, i, std::min(text.length() - pos, pattern.length() - i));
+            node = rich_bp.level_anc(node, lcp);
+            i += lcp;
+            if(i == pattern.length()){
+                break;
+            }
+            auto light_to = light_edges[rich_bp.rank(node-1)].find(pattern[i]);
+            if(light_to){
+                node = light_to.value();
+            }
+            else{
+                return std::nullopt;
+            }
+            ++i;
+        }
+        return node;
+    }
+    virtual std::uint64_t num_bytes() const{
+        // TODO:
+        std::uint64_t size = 0;
+        /*
+        size += text.capacity() * sizeof(unsigned char) + 2 * sizeof(std::size_t);
+        size += 2 * sizeof(std::size_t);
+        size += heavy_edge_to.capacity() * sizeof(int) + 2 * sizeof(std::size_t);
+        size += 2 * sizeof(std::size_t);
+        for(auto& map : light_edges){
+            size += map.num_bytes();
+        }
+        size += poses.size() * sizeof(int) + 2 * sizeof(std::size_t);
+         */
+        return size;
+    }
+};
+
 
 template <template <typename, typename> typename MapType, typename LAType> requires std::is_base_of_v<LevelAncestor, LAType>
 class HeavyTreeDAWGWithLA : HeavyTreeDAWG<MapType> {
@@ -398,7 +575,6 @@ public:
             light_edges.emplace_back(keys, values);
         }
         source = path_nodes_inv[0];
-        sink = path_nodes_inv[sink];
         light_edges.shrink_to_fit();
     }
     explicit HeavyPathDAWG(std::string_view text) : HeavyPathDAWG(DAWGBase(text)){}
@@ -425,8 +601,8 @@ public:
     virtual std::uint64_t num_bytes() const{
         std::uint64_t size = 0;
         size += sizeof(int);
-        size += hh_string.capacity() * sizeof(unsigned char) + 3 * sizeof(std::uint64_t);
-        size += 3 * sizeof(std::uint64_t);
+        size += hh_string.capacity() * sizeof(unsigned char) + 2 * sizeof(std::uint64_t);
+        size += 2 * sizeof(std::uint64_t);
         for(auto& x : light_edges){
             size += x.num_bytes();
         }

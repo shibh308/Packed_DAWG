@@ -121,10 +121,10 @@ public:
         std::uint64_t size = sizeof(root);
         size += sizeof(std::size_t) * 3;
         for(auto& path : heavy_pathes){
-            size += (path.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+            size += (path.capacity() * sizeof(int) + sizeof(std::size_t) * 2);
         }
-        size += (heavy_path_idx.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
-        size += (pos_in_heavy_path.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        size += (heavy_path_idx.capacity() * sizeof(int) + sizeof(std::size_t) * 2);
+        size += (pos_in_heavy_path.capacity() * sizeof(int) + sizeof(std::size_t) * 2);
         return size;
     }
 };
@@ -176,12 +176,6 @@ public:
             }
         }
         rich_bp = sdsl::bp_support_sada<>(&v);
-        for(int i = 1; i < 10; ++i){
-            if(v[i] == 1){
-                rich_bp.level_anc(i, 0);
-                rich_bp.level_anc(i, 1);
-            }
-        }
         indexes.shrink_to_fit();
         indexes_inv.shrink_to_fit();
     }
@@ -191,8 +185,8 @@ public:
     virtual std::uint64_t num_bytes() const{
         // about 2|V| words + 2|V| + o(n) bits
         std::uint64_t size;
-        size += (indexes.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
-        size += (indexes_inv.capacity() * sizeof(int) + sizeof(std::size_t) * 3);
+        // size += (indexes.capacity() * sizeof(int) + sizeof(std::size_t) * 2);
+        // size += (indexes_inv.capacity() * sizeof(int) + sizeof(std::size_t) * 2);
         std::ofstream out("/dev/null");
         size += v.serialize(out);
         size += rich_bp.serialize(out);

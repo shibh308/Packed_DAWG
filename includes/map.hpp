@@ -83,7 +83,7 @@ struct HashMap : Map<T, U> {
         }
     }
     std::uint64_t num_bytes() const{
-        return sizeof(n) + sizeof(d) + (v.capacity() * sizeof(std::pair<T, U>) + sizeof(std::size_t) * 3);
+        return sizeof(n) + sizeof(d) + (v.capacity() * sizeof(std::pair<T, U>) + sizeof(std::size_t) * 2);
     }
 };
 
@@ -179,8 +179,8 @@ struct LinearSearchMap : Map<K, V> {
         return keys.size();
     }
     std::uint64_t num_bytes() const{
-        return (keys.capacity() * sizeof(K) + sizeof(std::size_t) * 3)
-             + (values.capacity() * sizeof(V) + sizeof(std::size_t) * 3);
+        return (keys.capacity() * sizeof(K) + sizeof(std::size_t) * 2)
+             + (values.capacity() * sizeof(V) + sizeof(std::size_t) * 2);
     }
 };
 
