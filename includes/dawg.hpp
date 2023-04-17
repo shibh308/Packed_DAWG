@@ -10,6 +10,7 @@
 #include "full_text_index.hpp"
 #include "level_ancestor.hpp"
 #include "map.hpp"
+#include "vector.hpp"
 
 
 using ULong = std::uint64_t ;
@@ -51,7 +52,7 @@ inline unsigned int get_lcp(std::string_view str1, unsigned int ofs1, std::strin
 
 struct DAWGBase{
     struct Node{
-        HashMap<unsigned char, int> ch;
+        DynamicHashMap<unsigned char, int> ch;
         int slink, len;
         explicit Node(int len) : slink(-1), len(len){}
     };
@@ -101,13 +102,14 @@ struct DAWGBase{
 
 template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class SimpleDAWG : FullTextIndex {
-    std::vector<MapType<unsigned char, int>> children;
+    Vector<MapType<unsigned char, int>, std::uint32_t> children;
 public:
     explicit SimpleDAWG(const DAWGBase& base) {
+        std::vector<MapType<unsigned char, int>> children_;
         for(auto& node : base.nodes){
-            children.emplace_back(node.ch);
+            children_.emplace_back(node.ch);
         }
-        children.shrink_to_fit();
+        children = children_;
     }
     explicit SimpleDAWG(std::string_view text) : SimpleDAWG(DAWGBase(text)) {}
     std::optional<int> get_node(std::string_view pattern) const override {
@@ -125,9 +127,9 @@ public:
     }
     virtual std::uint64_t num_bytes() const{
         std::uint64_t size = 0;
-        size += 2 * sizeof(std::size_t);
-        for(auto& map : children){
-            size += map.num_bytes();
+        size += decltype(children)::offset_bytes;
+        for(int i = 0; i < children.size(); ++i){
+            size += children[i].num_bytes();
         }
         return size;
     }
@@ -139,8 +141,8 @@ protected:
     std::string text;
     std::string_view text_view;
     std::vector<int> heavy_edge_to;
-    std::vector<MapType<unsigned char, int>> light_edges;
-    std::vector<int> poses;
+    Vector<MapType<unsigned char, int>, std::uint32_t> light_edges;
+    Vector<int, std::uint32_t> poses;
 public:
     explicit HeavyTreeDAWG(std::string_view text) : text(text), text_view(text) {
         auto base = DAWGBase(text_view);
@@ -171,11 +173,11 @@ public:
         }
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
-        poses.resize(n, -1);
+        std::vector<int> poses_(n, 0);
         int sink = tps_order.back();
         // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
-        poses[sink] = text.size();
+        poses_[sink] = text.size();
         std::vector<unsigned char> heavy_edge_label(n, 0);
         heavy_edge_to.resize(n, -1);
         for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
@@ -186,13 +188,14 @@ public:
                 if(path_cnt_max < path_cnt[y]){
                     path_cnt_max = path_cnt[y];
                     heavy_edge_to[x] = y;
-                    assert(poses[y] != -1);
-                    poses[x] = poses[y] - 1;
+                    assert(poses_[y] != -1);
+                    poses_[x] = poses_[y] - 1;
                     heavy_edge_label[x] = key;
                 }
             }
             assert(1 <= path_cnt[x] && path_cnt[x] <= n);
         }
+        std::vector<MapType<unsigned char, int>> light_edges_;
         for(int x = 0; x < n; ++x){
             std::vector<unsigned char> keys;
             std::vector<int> values;
@@ -202,11 +205,10 @@ public:
                     values.emplace_back(y);
                 }
             }
-            light_edges.emplace_back(keys, values);
+            light_edges_.emplace_back(keys, values);
         }
-        heavy_edge_to.shrink_to_fit();
-        light_edges.shrink_to_fit();
-        poses.shrink_to_fit();
+        poses = poses_;
+        light_edges = light_edges_;
     }
 
 public:
@@ -242,11 +244,11 @@ public:
         size += text.capacity() * sizeof(unsigned char) + 2 * sizeof(std::size_t);
         size += 2 * sizeof(std::size_t);
         size += heavy_edge_to.capacity() * sizeof(int) + 2 * sizeof(std::size_t);
-        size += 2 * sizeof(std::size_t);
-        for(auto& map : light_edges){
-            size += map.num_bytes();
+        size += light_edges.offset_bytes;
+        for(int i = 0; i < light_edges.size(); ++i){
+            size += light_edges[i].num_bytes();
         }
-        size += poses.size() * sizeof(int) + 2 * sizeof(std::size_t);
+        size += poses.num_bytes();
         return size;
     }
 };
@@ -257,8 +259,8 @@ protected:
     std::string text;
     std::string_view text_view;
     int source;
-    std::vector<MapType<unsigned char, int>> light_edges;
-    std::vector<int> poses;
+    Vector<MapType<unsigned char, int>, std::uint32_t> light_edges;
+    Vector<int, std::uint32_t> poses;
     sdsl::bit_vector bp;
     sdsl::bp_support_sada<> rich_bp;
 public:
@@ -291,11 +293,11 @@ public:
         }
         assert(tps_order.size() == n);
         std::vector<int> path_cnt(n, 0);
-        poses.resize(n, -1);
+        std::vector<int> poses_(n, -1);
         int sink = tps_order.back();
         // assert(sink == base.node_ids.back());
         path_cnt[sink] = 1;
-        poses[sink] = text.size();
+        poses_[sink] = text.size();
         std::vector<unsigned char> heavy_edge_label(n, 0);
         std::vector<int> heavy_edge_to(n, -1);
         for(auto it = tps_order.rbegin(); it != tps_order.rend(); ++it){
@@ -306,13 +308,14 @@ public:
                 if(path_cnt_max < path_cnt[y]){
                     path_cnt_max = path_cnt[y];
                     heavy_edge_to[x] = y;
-                    assert(poses[y] != -1);
-                    poses[x] = poses[y] - 1;
+                    assert(poses_[y] != -1);
+                    poses_[x] = poses_[y] - 1;
                     heavy_edge_label[x] = key;
                 }
             }
             assert(1 <= path_cnt[x] && path_cnt[x] <= n);
         }
+        std::vector<MapType<unsigned char, int>> light_edges_;
         for(int x = 0; x < n; ++x){
             std::vector<unsigned char> keys;
             std::vector<int> values;
@@ -322,10 +325,10 @@ public:
                     values.emplace_back(y);
                 }
             }
-            light_edges.emplace_back(keys, values);
+            light_edges_.emplace_back(keys, values);
         }
+        light_edges = light_edges_;
 
-        // TODO
         int root;
         std::vector<int> indexes(2 * n, -1);
         std::vector<std::vector<int>> tree(n);
@@ -368,25 +371,20 @@ public:
         rich_bp = sdsl::bp_support_sada<>(&bp);
         source = indexes[0];
 
-        // TODO: 2n -> n (use select)
-        {
-            auto light_edges_tmp = light_edges;
-            auto poses_tmp = poses;
-            light_edges.clear();
-            light_edges.resize(n);
-            poses.clear();
-            poses.resize(n);
-            for(int i = 0; i < n; ++i){
-                std::vector<unsigned char> keys;
-                std::vector<int> values;
-                for(auto [k, v] : light_edges_tmp[i].items()){
-                    keys.emplace_back(k);
-                    values.emplace_back(indexes[v]);
-                }
-                light_edges[indexes_fl[i]] = MapType(keys, values);
-                poses[indexes_fl[i]] = poses_tmp[i];
+        decltype(light_edges_) light_edges__(n);
+        decltype(poses_) poses__(n);
+        for(int i = 0; i < n; ++i){
+            std::vector<unsigned char> keys;
+            std::vector<int> values;
+            for(auto [k, v] : light_edges_[i].items()){
+                keys.emplace_back(k);
+                values.emplace_back(indexes[v]);
             }
+            light_edges__[indexes_fl[i]] = MapType(keys, values);
+            poses__[indexes_fl[i]] = poses_[i];
         }
+        light_edges = light_edges__;
+        poses = poses__;
     }
 
 public:
@@ -412,18 +410,16 @@ public:
         return node;
     }
     virtual std::uint64_t num_bytes() const{
-        // TODO:
         std::uint64_t size = 0;
-        /*
         size += text.capacity() * sizeof(unsigned char) + 2 * sizeof(std::size_t);
-        size += 2 * sizeof(std::size_t);
-        size += heavy_edge_to.capacity() * sizeof(int) + 2 * sizeof(std::size_t);
-        size += 2 * sizeof(std::size_t);
-        for(auto& map : light_edges){
-            size += map.num_bytes();
+        size += decltype(light_edges)::offset_bytes;
+        for(int i = 0; i < light_edges.size(); ++i){
+            size += light_edges[i].num_bytes();
         }
-        size += poses.size() * sizeof(int) + 2 * sizeof(std::size_t);
-         */
+        size += poses.num_bytes();
+        std::ofstream of("/dev/null");
+        size += bp.serialize(of);
+        size += rich_bp.serialize(of);
         return size;
     }
 };
@@ -453,10 +449,11 @@ public:
 template <template <typename, typename> typename MapType> // requires std::is_base_of_v<Map, MapType>
 class HeavyPathDAWG : FullTextIndex {
     std::string hh_string;
-    std::vector<MapType<unsigned char, int>> light_edges;
+    Vector<MapType<unsigned char, int>, std::uint32_t> light_edges;
     int source;
 public:
-    explicit HeavyPathDAWG(const DAWGBase& base){
+    explicit HeavyPathDAWG(std::string_view text){
+        DAWGBase base(text);
         int n = base.nodes.size();
         std::vector<int> tps_order(n);
         std::vector<int> in_degree(n, 0);
@@ -562,22 +559,35 @@ public:
             }
         }
         assert(cnt == n);
+        std::vector<MapType<unsigned char, int>> light_edges_;
+        int edge_cnt = 0;
+        int hh_edge_cnt = 0;
         for(int i = 0; i < n; ++i){
             int x = path_nodes[i];
             std::vector<unsigned char> keys;
             std::vector<int> values;
             for(auto [key, y] : base.nodes[x].ch.items()){
+                ++edge_cnt;
+                hh_edge_cnt += (key == hh_string[i]);
                 if(key != hh_string[i]){
                     keys.emplace_back(key);
                     values.emplace_back(path_nodes_inv[y]);
                 }
             }
-            light_edges.emplace_back(keys, values);
+            light_edges_.emplace_back(keys, values);
         }
         source = path_nodes_inv[0];
-        light_edges.shrink_to_fit();
+        light_edges = light_edges_;
+        int heavy_edge_cnt = n - 1;
+        std::clog << "n   : " << text.size() << std::endl;
+        std::clog << "|V| : " << n << std::endl;
+        std::clog << "|E| : " << edge_cnt << std::endl;
+        std::clog << "|H| : " << heavy_edge_cnt << std::endl;
+        std::clog << "|HH|: " << hh_edge_cnt << std::endl;
+        std::clog << "|HL|: " << heavy_edge_cnt - hh_edge_cnt << std::endl;
+        std::clog << "|L| : " << edge_cnt - heavy_edge_cnt << std::endl;
+        std::clog << std::endl;
     }
-    explicit HeavyPathDAWG(std::string_view text) : HeavyPathDAWG(DAWGBase(text)){}
     std::optional<int> get_node(std::string_view pattern) const override{
         unsigned int node = source;
         for(unsigned int i = 0; i < pattern.length();){
@@ -600,11 +610,11 @@ public:
     }
     virtual std::uint64_t num_bytes() const{
         std::uint64_t size = 0;
-        size += sizeof(int);
+        size += sizeof(source);
         size += hh_string.capacity() * sizeof(unsigned char) + 2 * sizeof(std::uint64_t);
-        size += 2 * sizeof(std::uint64_t);
-        for(auto& x : light_edges){
-            size += x.num_bytes();
+        size += decltype(light_edges)::offset_bytes;
+        for(int i = 0; i < light_edges.size(); ++i){
+            size += light_edges[i].num_bytes();
         }
         return size;
     }

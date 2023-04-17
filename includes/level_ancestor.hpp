@@ -5,11 +5,28 @@
 #ifndef HEAVY_TREE_DAWG_LEVEL_ANCESTOR_HPP
 #define HEAVY_TREE_DAWG_LEVEL_ANCESTOR_HPP
 
+#include "vector.hpp"
 #include "sdsl/bp_support.hpp"
 
 class LevelAncestor{
     virtual inline int get_anc(int x, unsigned int k) const = 0;
     virtual std::uint64_t num_bytes() const = 0;
+};
+
+class LevelAncestorByNaive : LevelAncestor{
+    Vector<int, std::uint32_t> parent_vec;
+public:
+    explicit LevelAncestorByNaive(const std::vector<int>& parent_vec) : parent_vec(parent_vec){
+    }
+    virtual inline int get_anc(int x, unsigned int k) const override{
+        for(int i = 0; i < k; ++i){
+            x = parent_vec[x];
+        }
+        return x;
+    }
+    virtual std::uint64_t num_bytes() const override{
+        return parent_vec.num_bytes();
+    }
 };
 
 class LevelAncestorByLadder : LevelAncestor{

@@ -90,6 +90,8 @@ void _bench(std::string data_path, std::ofstream& out_file){
     std::clog << "constructing...: " << text.size() << std::endl;
     Benchmark<Index> bench(text, data_path.substr(data_path.rfind('/') + 1), out_file);
 
+    // constexpr int num_queries = 10000;
+    // bench.run(num_queries, 10000);
     constexpr int num_queries = 100'000;
     // bench.run(num_queries, 100000);
 
@@ -147,7 +149,7 @@ void bench_memory(std::string data_path, std::ofstream& out_file, int length_lim
 }
 
 template<typename K, typename V>
-using MapType = HashMap<K, V>;
+using MapType = BinarySearchMap<K, V>;
 
 int main(int argc, char** argv){
     if(argc == 1){
@@ -159,10 +161,9 @@ int main(int argc, char** argv){
             "./data/sources.10MiB",
         }){
             bench<
-                    HeavyTreeDAWGWithLABP<MapType>,
                     SimpleDAWG<MapType>,
+                    HeavyTreeDAWGWithLABP<MapType>,
                     HeavyTreeDAWG<MapType>,
-                    HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>,
                     HeavyPathDAWG<MapType>
             >(data_path, out_file);
         }
@@ -194,11 +195,8 @@ int main(int argc, char** argv){
         else if(strcmp(argv[2], "HeavyTree") == 0){
             bench_memory<HeavyTreeDAWG<MapType>>(data_path, out_file, length_limit);
         }
-        else if(strcmp(argv[2], "HeavyTreeLadder") == 0){
-            bench_memory<HeavyTreeDAWGWithLA<MapType, LevelAncestorByLadder>>(data_path, out_file, length_limit);
-        }
         else if(strcmp(argv[2], "HeavyTreeBP") == 0){
-            bench_memory<HeavyTreeDAWGWithLA<MapType, LevelAncestorByBP>>(data_path, out_file, length_limit);
+            bench_memory<HeavyTreeDAWGWithLABP<MapType>>(data_path, out_file, length_limit);
         }
         else if(strcmp(argv[2], "HeavyPath") == 0){
             bench_memory<HeavyPathDAWG<MapType>>(data_path, out_file, length_limit);
