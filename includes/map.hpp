@@ -21,17 +21,18 @@ struct DynamicHashMap : Map<T, U> {
     static constexpr std::uint64_t z = 65521;
     static constexpr T null = 0;
     // static constexpr std::uint64_t z = 60xf332ac987401cba5;
-    std::uint64_t n, d;
+    std::uint16_t n, d;
 
-    std::vector<std::pair<T, U>> v;
+    Vector<std::pair<T, U>, std::uint16_t> v;
 
-    DynamicHashMap() : n(0), d(1),  v(2, std::make_pair(null, U())){
+    DynamicHashMap() : n(0), d(1){
+        std::vector<std::pair<T, U>> v_(2, std::make_pair(null, U()));
+        v = decltype(v)(v_);
     }
     explicit DynamicHashMap(const std::vector<T>& keys, const std::vector<U>& values) : n(0), d(1), v(2, std::make_pair(null, U())){
         for(int i = 0; i < keys.size(); ++i){
             add(keys[i], values[i]);
         }
-        v.shrink_to_fit();
     }
     inline std::uint64_t hash(T key) const{return (z * key) & ((1u << d) - 1); }
 
@@ -59,8 +60,8 @@ struct DynamicHashMap : Map<T, U> {
 
     std::vector<std::pair<T, U>> items() const{
         std::vector<std::pair<T, U>> items;
-        unsigned int siz = v.size();
-        for(auto item : v){
+        for(int i = 0; i < v.size(); ++i){
+            auto& item = v[i];
             if(item.first != null){
                 items.emplace_back(item);
             }
@@ -71,19 +72,21 @@ struct DynamicHashMap : Map<T, U> {
 
     void resize(){
         ++d;
-        std::vector<std::pair<T, U>> old_table;
+        decltype(v) old_table;
         swap(old_table, v);
-        v.assign(1u << d, {null, U()});
+        std::vector<std::pair<T, U>> v_(1u << d, std::make_pair(null, U()));
+        v = decltype(v)(v_);
         assert(v.size() <= 512);
         n = 0;
-        for(auto item : old_table){
+        for(int i = 0; i < old_table.size(); ++i){
+            auto& item = old_table[i];
             if(item.first != null){
                 add(item.first, item.second);
             }
         }
     }
     std::uint64_t num_bytes() const{
-        return sizeof(n) + sizeof(d) + (v.capacity() * sizeof(std::pair<T, U>) + sizeof(std::size_t) * 3);
+        return sizeof(n) + sizeof(d) + v.num_bytes();
     }
 };
 
