@@ -8,16 +8,15 @@
 #include <cstring>
 
 #include "full_text_index.hpp"
-#include "level_ancestor.hpp"
+#include "sdsl/bp_support.hpp"
 #include "map.hpp"
 #include "vector.hpp"
 
 
-using ULong = std::uint64_t ;
-constexpr unsigned int WORD_SIZE = 64;
+using ULong = std::uint64_t;
+// constexpr unsigned int WORD_SIZE = 64;
 constexpr unsigned int CHAR_BITS = 8;
 constexpr unsigned int ALPHA = 8; // WORD_SIZE / CHAR_BITS;
-constexpr unsigned int LOG_ALPHA = 3;
 
 inline unsigned int get_lsb_pos(ULong val){
     if(val == 0){
@@ -25,16 +24,6 @@ inline unsigned int get_lsb_pos(ULong val){
     }
     unsigned int ctz = __builtin_ctzll(val);
     return ctz / CHAR_BITS;
-}
-
-inline ULong get_head(std::string_view str, unsigned int i){
-    ULong head = *reinterpret_cast<const ULong*>(str.data() + i);
-    if(str.length() < CHAR_BITS){
-        return head & ((1uLL << (CHAR_BITS * str.length())) - 1u);
-    }
-    else{
-        return head;
-    }
 }
 
 inline unsigned int get_lcp(std::string_view str1, unsigned int ofs1, std::string_view str2, unsigned int ofs2, unsigned int max_len){
@@ -421,27 +410,6 @@ public:
         size += bp.serialize(of);
         size += rich_bp.serialize(of);
         return size;
-    }
-};
-
-
-template <template <typename, typename> typename MapType, typename LAType> requires std::is_base_of_v<LevelAncestor, LAType>
-class HeavyTreeDAWGWithLA : HeavyTreeDAWG<MapType> {
-private:
-    LAType la;
-public:
-    explicit HeavyTreeDAWGWithLA(std::string_view text) : HeavyTreeDAWG<MapType>(text), la(this->heavy_edge_to){
-        this->heavy_edge_to.clear();
-        this->heavy_edge_to.shrink_to_fit();
-    }
-    std::optional<int> get_node(std::string_view pattern) const override{
-        return HeavyTreeDAWG<MapType>::get_node(pattern);
-    }
-    inline int get_anc(int node, int k) const override{
-        return la.get_anc(node, k);
-    }
-    virtual std::uint64_t num_bytes() const{
-        return HeavyTreeDAWG<MapType>::num_bytes() + la.num_bytes();
     }
 };
 
